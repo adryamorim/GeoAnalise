@@ -1,0 +1,596 @@
+import json
+import csv
+from pathlib import Path
+
+
+# ============================================================
+# CONFIGURAÇÃO
+# ============================================================
+
+# Pasta onde estão os arquivos:
+# BA_RS_2016.json
+# BA_RS_2017.json
+# ...
+# BA_RS_2026.json
+PASTA = Path(r"C:\Geo\Escola de Governo")
+
+
+# Prefixos dos municípios:
+# BA = 29
+# RS = 43
+ESTADO_BA = "29"
+ESTADO_RS = "43"
+
+
+# ------------------------------------------------------------
+# LIMITES ESPACIAIS AMPLIADOS
+#
+# Não são os limites oficiais exatos dos estados.
+# São "caixas de segurança" usadas apenas para detectar
+# geometrias claramente absurdas.
+#
+# A margem é propositalmente ampla para não eliminar
+# propriedades próximas às fronteiras estaduais.
+# ------------------------------------------------------------
+
+LIMITES = {
+
+    "BA": {
+        "min_lon": -47.5,
+        "max_lon": -36.5,
+        "min_lat": -19.5,
+        "max_lat": -7.5,
+    },
+
+    "RS": {
+        "min_lon": -58.5,
+        "max_lon": -48.5,
+        "min_lat": -34.5,
+        "max_lat": -26.0,
+    }
+}
+
+
+# ------------------------------------------------------------
+# EXTENSÃO MÁXIMA DE SEGURANÇA
+#
+# Uma gleba individual com uma geometria que se estende
+# dezenas de graus provavelmente está corrompida.
+#
+# Valores em graus.
+# ------------------------------------------------------------
+
+EXTENSAO_MAX_LON = 5.0
+EXTENSAO_MAX_LAT = 5.0
+
+
+# ============================================================
+# FUNÇÕES
+# ============================================================
+
+def obter_uf(id_municipio):
+    """
+    Determina a UF a partir dos dois primeiros dígitos
+    do código IBGE do município.
+    """
+
+    if id_municipio is None:
+        return None
+
+    codigo = str(id_municipio).strip()
+
+    if codigo.startswith(ESTADO_BA):
+        return "BA"
+
+    if codigo.startswith(ESTADO_RS):
+        return "RS"
+
+    return None
+
+
+# ------------------------------------------------------------
+
+def extrair_coordenadas(obj, coordenadas=None):
+    """
+    Percorre recursivamente a estrutura GeoJSON e extrai
+    todos os pares [longitude, latitude].
+    """
+
+    if coordenadas is None:
+        coordenadas = []
+
+    if isinstance(obj, list):
+
+        # Par de coordenadas:
+        # [longitude, latitude]
+        if (
+            len(obj) >= 2
+            and isinstance(obj[0], (int, float))
+            and isinstance(obj[1], (int, float))
+        ):
+            coordenadas.append(
+                (float(obj[0]), float(obj[1]))
+            )
+
+        else:
+
+            for item in obj:
+                extrair_coordenadas(item, coordenadas)
+
+    elif isinstance(obj, dict):
+
+        # GeometryCollection
+        if obj.get("type") == "GeometryCollection":
+
+            for geometria in obj.get("geometries", []):
+                extrair_coordenadas(geometria, coordenadas)
+
+        elif "coordinates" in obj:
+
+            extrair_coordenadas(
+                obj["coordinates"],
+                coordenadas
+            )
+
+    return coordenadas
+
+
+# ------------------------------------------------------------
+
+def analisar_geometria(geometria, uf):
+    """
+    Analisa a geometria e retorna:
+
+    (suspeita, motivo)
+
+    Se estiver normal:
+        (False, "")
+
+    Se estiver suspeita:
+        (True, "motivo")
+    """
+
+    if geometria is None:
+        return True, "geometria ausente"
+
+    coordenadas = extrair_coordenadas(geometria)
+
+    if not coordenadas:
+        return True, "sem coordenadas"
+
+    longitudes = [p[0] for p in coordenadas]
+    latitudes = [p[1] for p in coordenadas]
+
+    min_lon = min(longitudes)
+    max_lon = max(longitudes)
+
+    min_lat = min(latitudes)
+    max_lat = max(latitudes)
+
+    extensao_lon = max_lon - min_lon
+    extensao_lat = max_lat - min_lat
+
+    # --------------------------------------------------------
+    # 1. Extensão absurda
+    # --------------------------------------------------------
+
+    if extensao_lon > EXTENSAO_MAX_LON:
+
+        return (
+            True,
+            f"extensão longitudinal absurda: "
+            f"{extensao_lon:.2f} graus"
+        )
+
+    if extensao_lat > EXTENSAO_MAX_LAT:
+
+        return (
+            True,
+            f"extensão latitudinal absurda: "
+            f"{extensao_lat:.2f} graus"
+        )
+
+    # --------------------------------------------------------
+    # 2. Compatibilidade com o estado
+    # --------------------------------------------------------
+
+    if uf in LIMITES:
+
+        limite = LIMITES[uf]
+
+        fora_lon = (
+            min_lon < limite["min_lon"]
+            or
+            max_lon > limite["max_lon"]
+        )
+
+        fora_lat = (
+            min_lat < limite["min_lat"]
+            or
+            max_lat > limite["max_lat"]
+        )
+
+        if fora_lon or fora_lat:
+
+            return (
+                True,
+                f"geometria fora da área esperada para {uf}: "
+                f"bbox=({min_lon:.4f}, {min_lat:.4f}, "
+                f"{max_lon:.4f}, {max_lat:.4f})"
+            )
+
+    return False, ""
+
+
+# ------------------------------------------------------------
+
+def processar_arquivo(arquivo_entrada):
+    """
+    Converte um arquivo JSONL para GeoJSON,
+    removendo geometrias suspeitas.
+    """
+
+    nome = arquivo_entrada.stem
+
+    arquivo_saida = (
+        PASTA /
+        f"{nome}_corrigido.geojson"
+    )
+
+    arquivo_log = (
+        PASTA /
+        f"{nome}_geometrias_removidas.csv"
+    )
+
+    total = 0
+    mantidas = 0
+    removidas = 0
+
+    primeiro = True
+
+    print()
+    print("=" * 80)
+    print(f"PROCESSANDO: {arquivo_entrada.name}")
+    print("=" * 80)
+
+    with open(
+        arquivo_entrada,
+        "r",
+        encoding="utf-8"
+    ) as entrada, open(
+        arquivo_saida,
+        "w",
+        encoding="utf-8"
+    ) as saida, open(
+        arquivo_log,
+        "w",
+        encoding="utf-8",
+        newline=""
+    ) as log:
+
+        # ----------------------------------------------------
+        # Cabeçalho do GeoJSON
+        # ----------------------------------------------------
+
+        saida.write(
+            '{"type":"FeatureCollection","features":[\n'
+        )
+
+        escritor_log = csv.writer(log)
+
+        escritor_log.writerow([
+            "id_referencia_bacen",
+            "numero_ordem",
+            "indice_gleba",
+            "id_municipio",
+            "uf",
+            "motivo",
+            "arquivo_origem"
+        ])
+
+        # ----------------------------------------------------
+        # Processamento linha a linha
+        # ----------------------------------------------------
+
+        for numero_linha, linha in enumerate(
+            entrada,
+            start=1
+        ):
+
+            linha = linha.strip()
+
+            if not linha:
+                continue
+
+            total += 1
+
+            try:
+
+                registro = json.loads(linha)
+
+            except Exception as erro:
+
+                print(
+                    f"ERRO JSON na linha "
+                    f"{numero_linha}: {erro}"
+                )
+
+                removidas += 1
+
+                escritor_log.writerow([
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    f"JSON inválido: {erro}",
+                    arquivo_entrada.name
+                ])
+
+                continue
+
+            # ------------------------------------------------
+            # Recupera geometria
+            # ------------------------------------------------
+
+            geometria = registro.get("geojson")
+
+            if geometria is None:
+
+                removidas += 1
+
+                escritor_log.writerow([
+                    registro.get(
+                        "id_referencia_bacen",
+                        ""
+                    ),
+                    registro.get(
+                        "numero_ordem",
+                        ""
+                    ),
+                    registro.get(
+                        "indice_gleba",
+                        ""
+                    ),
+                    registro.get(
+                        "id_municipio",
+                        ""
+                    ),
+                    "",
+                    "geometria ausente",
+                    arquivo_entrada.name
+                ])
+
+                continue
+
+            # Se veio como string JSON
+            if isinstance(geometria, str):
+
+                try:
+                    geometria = json.loads(
+                        geometria
+                    )
+
+                except Exception as erro:
+
+                    removidas += 1
+
+                    escritor_log.writerow([
+                        registro.get(
+                            "id_referencia_bacen",
+                            ""
+                        ),
+                        registro.get(
+                            "numero_ordem",
+                            ""
+                        ),
+                        registro.get(
+                            "indice_gleba",
+                            ""
+                        ),
+                        registro.get(
+                            "id_municipio",
+                            ""
+                        ),
+                        "",
+                        f"geometria JSON inválida: {erro}",
+                        arquivo_entrada.name
+                    ])
+
+                    continue
+
+            # ------------------------------------------------
+            # Identifica UF
+            # ------------------------------------------------
+
+            id_municipio = registro.get(
+                "id_municipio"
+            )
+
+            uf = obter_uf(id_municipio)
+
+            # ------------------------------------------------
+            # Analisa geometria
+            # ------------------------------------------------
+
+            suspeita, motivo = analisar_geometria(
+                geometria,
+                uf
+            )
+
+            if suspeita:
+
+                removidas += 1
+
+                id_ref = registro.get(
+                    "id_referencia_bacen",
+                    ""
+                )
+
+                numero_ordem = registro.get(
+                    "numero_ordem",
+                    ""
+                )
+
+                indice_gleba = registro.get(
+                    "indice_gleba",
+                    ""
+                )
+
+                print()
+                print(
+                    "  ⚠ GEOMETRIA REMOVIDA"
+                )
+                print(
+                    f"    REF BACEN : {id_ref}"
+                )
+                print(
+                    f"    ORDEM     : {numero_ordem}"
+                )
+                print(
+                    f"    GLEBA     : {indice_gleba}"
+                )
+                print(
+                    f"    MUNICÍPIO : {id_municipio}"
+                )
+                print(
+                    f"    UF        : {uf}"
+                )
+                print(
+                    f"    MOTIVO    : {motivo}"
+                )
+
+                escritor_log.writerow([
+                    id_ref,
+                    numero_ordem,
+                    indice_gleba,
+                    id_municipio,
+                    uf,
+                    motivo,
+                    arquivo_entrada.name
+                ])
+
+                continue
+
+            # ------------------------------------------------
+            # Cria Feature
+            # ------------------------------------------------
+
+            propriedades = dict(registro)
+
+            # Remove geojson das propriedades
+            propriedades.pop(
+                "geojson",
+                None
+            )
+
+            feature = {
+                "type": "Feature",
+                "geometry": geometria,
+                "properties": propriedades
+            }
+
+            # ------------------------------------------------
+            # Escreve no GeoJSON
+            # ------------------------------------------------
+
+            if not primeiro:
+                saida.write(",\n")
+
+            json.dump(
+                feature,
+                saida,
+                ensure_ascii=False,
+                separators=(",", ":")
+            )
+
+            primeiro = False
+            mantidas += 1
+
+            # ------------------------------------------------
+            # Progresso
+            # ------------------------------------------------
+
+            if total % 10000 == 0:
+
+                print(
+                    f"Processadas: {total:>10,} | "
+                    f"mantidas: {mantidas:>10,} | "
+                    f"removidas: {removidas:>6,}"
+                )
+
+        # ----------------------------------------------------
+        # Fecha FeatureCollection
+        # ----------------------------------------------------
+
+        saida.write("\n]}")
+
+    # --------------------------------------------------------
+    # Estatísticas
+    # --------------------------------------------------------
+
+    tamanho_mb = (
+        arquivo_saida.stat().st_size
+        /
+        (1024 * 1024)
+    )
+
+    print()
+    print("-" * 80)
+    print(f"RESULTADO: {arquivo_entrada.name}")
+    print("-" * 80)
+    print(f"Total lido       : {total:,}")
+    print(f"Geometrias mantidas : {mantidas:,}")
+    print(f"Geometrias removidas: {removidas:,}")
+    print(f"GeoJSON           : {arquivo_saida.name}")
+    print(f"Tamanho           : {tamanho_mb:.2f} MB")
+    print(f"Log               : {arquivo_log.name}")
+    print("-" * 80)
+
+
+# ============================================================
+# PROGRAMA PRINCIPAL
+# ============================================================
+
+def main():
+
+    arquivos = sorted(
+        PASTA.glob("BA_RS_*.json")
+    )
+
+    if not arquivos:
+
+        print(
+            "Nenhum arquivo BA_RS_*.json "
+            "foi encontrado em:"
+        )
+
+        print(PASTA)
+
+        return
+
+    print()
+    print("=" * 80)
+    print("CONVERSOR BA/RS → GEOJSON")
+    print("=" * 80)
+    print()
+    print(f"Pasta: {PASTA}")
+    print()
+    print("Arquivos encontrados:")
+
+    for arquivo in arquivos:
+        print(f"  - {arquivo.name}")
+
+    print()
+
+    for arquivo in arquivos:
+        processar_arquivo(arquivo)
+
+    print()
+    print("=" * 80)
+    print("TODOS OS ARQUIVOS FORAM PROCESSADOS")
+    print("=" * 80)
+
+
+if __name__ == "__main__":
+    main()
