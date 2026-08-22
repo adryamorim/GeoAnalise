@@ -11,7 +11,10 @@ Ao exportar os dados do big query e transformar em geojson para inserir no qgis,
 
 Gerei novo código que detecta anomalias nas coordenadas (convertergeojsonv2)
  <img width="886" height="149" alt="image" src="https://github.com/user-attachments/assets/b447c49d-91f0-4ab3-a656-ff786ae55b31" />
-
 Um arquivo informando quais geometrias foram removidas por estado
 <img width="886" height="569" alt="image" src="https://github.com/user-attachments/assets/c671f2a1-d773-47e5-a131-471f5d20286c" />
 
+
+
+Para esta análise precisamos baixar também as planilhas de Operações Contratadas (SICOR_OPERACAO_BASICA_ESTADO_YYYY.csv) dos mesmos anos. A chave primária composta para unir os dados financeiros (atributos) com os dados espaciais (geometrias) é a junção dos campos id_referencia_bacen + nu_ordem
+Como os arquivos são muito extensos, criei o script em Python que filtra todos os csv para que fique apenas com BA e RS (filtrarestados).
