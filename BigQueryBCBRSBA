@@ -1,0 +1,33 @@
+SELECT
+  g.ano_emissao,
+  g.mes_emissao,
+  g.id_referencia_bacen,
+  g.numero_ordem,
+  g.indice_gleba,
+  c.id_municipio,
+
+  CASE
+    WHEN STARTS_WITH(CAST(c.id_municipio AS STRING), '29') THEN 'BA'
+    WHEN STARTS_WITH(CAST(c.id_municipio AS STRING), '43') THEN 'RS'
+  END AS uf,
+
+  ST_ASGEOJSON(g.geometria) AS geojson
+
+FROM
+  `basedosdados.br_bcb_sicor.recurso_publico_gleba` AS g
+
+INNER JOIN
+  `basedosdados.br_bcb_sicor.recurso_publico_complemento_operacao` AS c
+ON
+  g.ano_emissao = c.ano_emissao
+  AND g.mes_emissao = c.mes_emissao
+  AND g.id_referencia_bacen = c.id_referencia_bacen
+  AND g.numero_ordem = c.numero_ordem
+
+WHERE
+  g.ano_emissao = 2016
+  AND (
+    STARTS_WITH(CAST(c.id_municipio AS STRING), '29')
+    OR
+    STARTS_WITH(CAST(c.id_municipio AS STRING), '43')
+  );
