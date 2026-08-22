@@ -2,8 +2,12 @@
 
 Mineração - Aprendizados
 
-Ao exportar os dados do big query e transformar em geojson para inserir no qgis, algumas geometrias estavam gerando inconsistências. 
-<img width="886" height="569" alt="image" src="https://github.com/user-attachments/assets/a1540edc-2efe-4aa3-9683-bbe58c0c1af3" />
+Os primeiros dados de crédito rural foram buscados diretamente do site Base dos Dados pois existia um datalake com os dados já tratados. https://basedosdados.org/dataset/544c9d22-97b7-479a-8eca-94762840b465?table=ce7babc2-35b6-4e48-a604-3c4d32306bb3
+No Google Cloud, extrai estes dados diretamente através de Big Query (BigQueryBCBRSBA) já trazendo apenas os dados de operações de crédito da Bahia e do Rio Grande do Sul de 2016 a 2026, pois o volume completo dos dados seria muito grande. 
+
+Os dados foram gerados e exportados em json, para trasnformá-los em gejson para que o Qgis pudesse ler, criei o script (convertergeojson)
+Ao exportar os dados do big query e transformar em geojson para inserir no qgis, algumas geometrias estavam gerando inconsistências, com cruzamento de pontos que extravasavam os estados analisados.
+<img width="362" height="410" alt="image" src="https://github.com/user-attachments/assets/8eabef9b-6788-4851-9339-826d8eb121af" />
 
 Gerei novo código que detecta anomalias nas coordenadas (convertergeojsonv2)
  <img width="886" height="149" alt="image" src="https://github.com/user-attachments/assets/b447c49d-91f0-4ab3-a656-ff786ae55b31" />
