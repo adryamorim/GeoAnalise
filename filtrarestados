@@ -1,0 +1,175 @@
+import pandas as pd
+from pathlib import Path
+
+# ============================================================
+# CONFIGURAÇÃO
+# ============================================================
+
+# Pasta onde estão os CSV originais
+PASTA_ENTRADA = Path(r"C:\Geo\Escola de Governo\CSV")
+
+# Pasta onde serão salvos os CSV filtrados
+PASTA_SAIDA = PASTA_ENTRADA / "BA_RS"
+
+# Tamanho de cada bloco processado
+TAMANHO_BLOCO = 100_000
+
+# Estados que serão mantidos
+ESTADOS = {"BA", "RS"}
+
+# Separador do CSV
+SEPARADOR = ";"
+
+# ============================================================
+# PREPARAÇÃO
+# ============================================================
+
+PASTA_SAIDA.mkdir(parents=True, exist_ok=True)
+
+arquivos = sorted(PASTA_ENTRADA.glob("*.csv"))
+
+if not arquivos:
+    print("Nenhum arquivo CSV encontrado.")
+    raise SystemExit
+
+print("=" * 70)
+print(f"Arquivos encontrados: {len(arquivos)}")
+print("=" * 70)
+
+# ============================================================
+# PROCESSAMENTO
+# ============================================================
+
+for arquivo in arquivos:
+
+    # Não processar arquivos que eventualmente estejam na pasta de saída
+    if arquivo.parent == PASTA_SAIDA:
+        continue
+
+    arquivo_saida = PASTA_SAIDA / f"{arquivo.stem}_BA_RS.csv"
+
+    print()
+    print("=" * 70)
+    print(f"Arquivo: {arquivo.name}")
+    print("=" * 70)
+
+    total_linhas = 0
+    total_ba = 0
+    total_rs = 0
+    primeiro_bloco = True
+
+    # --------------------------------------------------------
+    # Tenta primeiro UTF-8 e depois Latin-1
+    # --------------------------------------------------------
+
+    for encoding in ["utf-8-sig", "latin1"]:
+
+        try:
+
+            leitor = pd.read_csv(
+                arquivo,
+                sep=SEPARADOR,
+                dtype=str,
+                chunksize=TAMANHO_BLOCO,
+                encoding=encoding,
+                low_memory=False
+            )
+
+            # Se conseguiu abrir, sai do loop de encoding
+            break
+
+        except UnicodeDecodeError:
+
+            if encoding == "latin1":
+                raise
+
+            continue
+
+    # --------------------------------------------------------
+    # Processa os blocos
+    # --------------------------------------------------------
+
+    for bloco in leitor:
+
+        total_linhas += len(bloco)
+
+        # Remove espaços do nome das colunas
+        bloco.columns = bloco.columns.str.strip()
+
+        # Verifica se existe CD_ESTADO
+        if "CD_ESTADO" not in bloco.columns:
+            raise ValueError(
+                f'A coluna "CD_ESTADO" não foi encontrada em {arquivo.name}.\n'
+                f"Colunas encontradas:\n{list(bloco.columns)}"
+            )
+
+        # Limpa o campo de estado
+        estado = (
+            bloco["CD_ESTADO"]
+            .fillna("")
+            .astype(str)
+            .str.strip()
+            .str.upper()
+        )
+
+        # Mantém somente BA e RS
+        filtro = estado.isin(ESTADOS)
+
+        filtrado = bloco.loc[filtro].copy()
+
+        # Quantidades
+        qtd_ba = (estado == "BA").sum()
+        qtd_rs = (estado == "RS").sum()
+
+        total_ba += qtd_ba
+        total_rs += qtd_rs
+
+        # ----------------------------------------------------
+        # Grava o bloco filtrado
+        # ----------------------------------------------------
+
+        if not filtrado.empty:
+
+            filtrado.to_csv(
+                arquivo_saida,
+                sep=SEPARADOR,
+                index=False,
+                encoding="utf-8-sig",
+                mode="w" if primeiro_bloco else "a",
+                header=primeiro_bloco
+            )
+
+            primeiro_bloco = False
+
+        print(
+            f"Processadas: {total_linhas:>12,} | "
+            f"BA: {total_ba:>10,} | "
+            f"RS: {total_rs:>10,}"
+        )
+
+    # --------------------------------------------------------
+    # Resultado
+    # --------------------------------------------------------
+
+    total_filtrado = total_ba + total_rs
+
+    print()
+    print(f"Concluído: {arquivo.name}")
+    print(f"Total original : {total_linhas:,}")
+    print(f"BA             : {total_ba:,}")
+    print(f"RS             : {total_rs:,}")
+    print(f"BA + RS        : {total_filtrado:,}")
+
+    if arquivo_saida.exists():
+        tamanho_mb = arquivo_saida.stat().st_size / (1024 * 1024)
+        print(f"Arquivo saída  : {arquivo_saida}")
+        print(f"Tamanho saída  : {tamanho_mb:.2f} MB")
+    else:
+        print("Nenhum registro BA/RS encontrado.")
+
+print()
+print("=" * 70)
+print("PROCESSAMENTO CONCLUÍDO")
+print("=" * 70)
+print(f"Arquivos filtrados estão em:")
+print(PASTA_SAIDA)
