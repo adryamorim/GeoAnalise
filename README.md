@@ -18,3 +18,5 @@ Um arquivo informando quais geometrias foram removidas por estado
 
 Para esta análise precisamos baixar também as planilhas de Operações Contratadas (SICOR_OPERACAO_BASICA_ESTADO_YYYY.csv) dos mesmos anos. A chave primária composta para unir os dados financeiros (atributos) com os dados espaciais (geometrias) é a junção dos campos id_referencia_bacen + nu_ordem
 Como os arquivos são muito extensos, criei o script em Python que filtra todos os csv para que fique apenas com BA e RS (filtrarestados).
+
+<img width="579" height="179" alt="image" src="https://github.com/user-attachments/assets/4f25a6ce-e3d8-4487-a720-017959614f67" />
